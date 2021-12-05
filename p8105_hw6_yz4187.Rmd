@@ -9,6 +9,10 @@ output: github_document
 library(tidyverse)
 library(modelr)
 library(purrr)
+library(mgcv)
+library(ggplot2)
+library(patchwork)
+set.seed(1)
 ```
 
 ## Problem 1 ##
@@ -88,4 +92,92 @@ crossv %>%
     title = "Model Comprison"
   ) 
 ```
+
+## Problem 2 ##
+
+```{r, message=FALSE}
+library(p8105.datasets)
+
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+
+lm(tmax ~ tmin, data = weather_df) %>% 
+  broom::tidy() %>% 
+  knitr::kable(digits = 3)
+```
+
+Estimation 1: r̂ ^2
+```{r}
+sample1 = weather_df %>% 
+  modelr::bootstrap(n = 5000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x)),
+    results = map(models, broom::glance)) %>% 
+  unnest(results) %>% 
+  select(r.squared)
+```
+
+Estimation 2: log(β̂ 0∗β̂ 1)
+```{r, warning=FALSE}
+sample2= weather_df %>% 
+  modelr::bootstrap(n = 5000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x)),
+    results = map(models, broom::tidy)) %>% 
+  select(-strap, -models) %>% 
+  unnest(results) %>% 
+  select(term, estimate) %>% 
+  pivot_wider(
+    names_from = "term",
+    values_from = "estimate") %>% 
+  unnest() %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    log_estimate = log10(intercept * tmin)
+  )
+```
+
+Making a plot:
+```{r, warning=FALSE}
+plot1 = 
+  sample1 %>% 
+  ggplot(aes(x =r.squared)) +
+  geom_density(aes(fill = "pink"), size = 1.1) + 
+  geom_vline(aes(xintercept = mean(r.squared)), color = "blue", linetype = "dashed", size = 1) +
+  labs(title = "Distribution of r square in 5000 sampling",
+       x = "R square",
+       y = "Density") +
+  theme(legend.position = "none")
+## The distribution is left-skewed meaning the median is larger than mean
+## calculate the CI of r square
+quantile(sample1$r.squared, probs = c(0.025, 0.975))
+
+plot2 = 
+  sample2 %>% 
+  ggplot(aes(x = log_estimate)) +
+  geom_density(aes(fill = "yellow"), size = 1.1) +
+  geom_vline(aes(xintercept = mean(log_estimate)),
+            color = "blue", linetype = "dashed", size = 1) +
+  labs(title = "Distribution of log(β̂ 0∗β̂ ) in 5000 sampling",
+       x = "log(β̂ 0∗β̂ 1)",
+       y = "Density") +
+  theme(legend.position = "none")
+
+plot1 + plot2
+
+quantile(sample1$r.squared, c(0.025, 0.975))
+quantile(sample2$log_estimate, c(0.025, 0.975))
+```
+
+*Description:* The 95% confidence interval of r square is 0.893 at 2.5% quantile and 0.927 at 97.5% quantile. The 95% confidence interval of log(β̂ 0∗β̂ 1)is   0.853 at 2.5% quantile and 0.894 at 97.5% quantile.
+
 
